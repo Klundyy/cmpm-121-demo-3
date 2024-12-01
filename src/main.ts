@@ -32,7 +32,7 @@ const playerMarker = leaflet.marker(START_LOCATION);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
-let playerItems: Item[] = [];
+const playerItems: Item[] = [];
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No items yet...";
 
@@ -89,8 +89,8 @@ function spawnItem(i: number, j: number) {
   ]);
 
   const cell = getCell(i, j);
-  for(let i = 0; i < 2; i++){
-    const item = createItem(cell);
+  for (let i = 0; i < 2; i++) {
+    createItem(cell);
   }
 
   const rect = leaflet.rectangle(bounds);
@@ -108,7 +108,7 @@ function spawnItem(i: number, j: number) {
     });
 
     popupDiv.appendChild(tileItemsList);
-    
+
     // Add the collect button
     const collectButton = document.createElement("button");
     collectButton.textContent = "Collect Item";
