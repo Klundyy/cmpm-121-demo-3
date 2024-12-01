@@ -32,9 +32,54 @@ const playerMarker = leaflet.marker(START_LOCATION);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
-let playerItems = 0;
+let playerItems: Item[] = [];
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
-statusPanel.innerHTML = "No points yet...";
+statusPanel.innerHTML = "No items yet...";
+
+interface Cell {
+  i: number;
+  j: number;
+  items: Item[];
+}
+
+interface Item {
+  cell: Cell;
+  serialNum: number;
+  getId: () => string;
+}
+
+const cellCache = new Map<string, Cell>();
+
+function getCell(i: number, j: number): Cell {
+  const key = `${i}:${j}`;
+  if (!cellCache.has(key)) {
+    const cell: Cell = { i, j, items: [] };
+    cellCache.set(key, cell);
+  }
+  return cellCache.get(key)!;
+}
+
+function createItem(cell: Cell): Item {
+  const serialNum = cell.items.length;
+  const item: Item = {
+    cell,
+    serialNum,
+    getId: () => `${cell.i}:${cell.j}#${serialNum}`,
+  };
+  cell.items.push(item);
+  return item;
+}
+
+function updateStatusPanel() {
+  // Update collected items
+  const collectedItems = playerItems
+    .map((item) => `<li>${item.getId()}</li>`)
+    .join("");
+  statusPanel.innerHTML = `
+    <div>Collected Items:</div>
+    <ul>${collectedItems || "<li>No items collected yet</li>"}</ul>
+  `;
+}
 
 function spawnItem(i: number, j: number) {
   const origin = START_LOCATION;
@@ -43,35 +88,65 @@ function spawnItem(i: number, j: number) {
     [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
   ]);
 
+  const cell = getCell(i, j);
+  for(let i = 0; i < 2; i++){
+    const item = createItem(cell);
+  }
+
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
   rect.bindPopup(() => {
-    let pointValue = Math.floor(luck([i, j, "initialValue"].toString()) * 100);
-
     const popupDiv = document.createElement("div");
     popupDiv.innerHTML = `
-                <div>There is an item here at "${i},${j}". It has value <span id="value">${pointValue}</span>.</div>`;
-    popupDiv
-      .querySelector<HTMLButtonElement>("#collect")!;
+      <div>Tile (${i}, ${j})</div>
+    `;
+    const tileItemsList = document.createElement("ul");
+    cell.items.forEach((tileItem) => {
+      const itemElement = document.createElement("li");
+      itemElement.textContent = tileItem.getId();
+      tileItemsList.appendChild(itemElement);
+    });
+
+    popupDiv.appendChild(tileItemsList);
+    
+    // Add the collect button
     const collectButton = document.createElement("button");
     collectButton.textContent = "Collect Item";
     collectButton.addEventListener("click", () => {
-      playerItems++;
-      pointValue--;
-      popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML = pointValue
-        .toString();
-      statusPanel.innerHTML = `${playerItems} items collected`;
+      if (cell.items.length > 0) {
+        const collectedItem = cell.items.pop()!;
+        playerItems.push(collectedItem);
+        updateStatusPanel();
+        while (tileItemsList.firstChild) {
+          tileItemsList.removeChild(tileItemsList.firstChild);
+        }
+        cell.items.forEach((tileItem) => {
+          const itemElement = document.createElement("li");
+          itemElement.textContent = tileItem.getId();
+          tileItemsList.appendChild(itemElement);
+        });
+      } else {
+        alert("No items left in this tile!");
+      }
     });
     popupDiv.appendChild(collectButton);
+
+    // Add the deposit button
     const depositButton = document.createElement("button");
     depositButton.textContent = "Deposit Item";
     depositButton.addEventListener("click", () => {
-      if (playerItems > 0) {
-        playerItems--;
-        pointValue++;
-        popupDiv.querySelector<HTMLSpanElement>("#value")!.innerHTML =
-          pointValue.toString();
-        statusPanel.innerHTML = `${playerItems} items collected`;
+      if (playerItems.length > 0) {
+        const depositedItem = playerItems.pop()!;
+        cell.items.push(depositedItem);
+        updateStatusPanel();
+        while (tileItemsList.firstChild) {
+          tileItemsList.removeChild(tileItemsList.firstChild);
+        }
+        cell.items.forEach((tileItem) => {
+          const itemElement = document.createElement("li");
+          itemElement.textContent = tileItem.getId();
+          tileItemsList.appendChild(itemElement);
+        });
       } else {
         alert("No items to deposit!");
       }
