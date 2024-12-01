@@ -70,6 +70,20 @@ function createItem(cell: Cell): Item {
   return item;
 }
 
+function latLngToCell(lat: number, lng: number): { i: number; j: number } {
+  return {
+    i: Math.floor(lat / TILE_DEGREES),
+    j: Math.floor(lng / TILE_DEGREES),
+  };
+}
+
+function cellToLatLng(i: number, j: number): { lat: number; lng: number } {
+  return {
+    lat: i * TILE_DEGREES,
+    lng: j * TILE_DEGREES,
+  };
+}
+
 function updateStatusPanel() {
   // Update collected items
   const collectedItems = playerItems
@@ -82,14 +96,16 @@ function updateStatusPanel() {
 }
 
 function spawnItem(i: number, j: number) {
-  const origin = START_LOCATION;
+  const { lat, lng } = cellToLatLng(i, j);
   const bounds = leaflet.latLngBounds([
-    [origin.lat + i * TILE_DEGREES, origin.lng + j * TILE_DEGREES],
-    [origin.lat + (i + 1) * TILE_DEGREES, origin.lng + (j + 1) * TILE_DEGREES],
+    [lat, lng],
+    [lat + TILE_DEGREES, lng + TILE_DEGREES],
   ]);
 
+  const numItems = Math.floor(luck([i, j, "initialValue"].toString()) * 10) +
+    1;
   const cell = getCell(i, j);
-  for (let i = 0; i < 2; i++) {
+  for (let i = 0; i < numItems; i++) {
     createItem(cell);
   }
 
@@ -156,8 +172,13 @@ function spawnItem(i: number, j: number) {
   });
 }
 
-for (let i = -SEARCH_SIZE; i < SEARCH_SIZE; i++) {
-  for (let j = -SEARCH_SIZE; j < SEARCH_SIZE; j++) {
+const globalTile = latLngToCell(START_LOCATION.lat, START_LOCATION.lng);
+for (let i = globalTile.i - SEARCH_SIZE; i < globalTile.i + SEARCH_SIZE; i++) {
+  for (
+    let j = globalTile.j - SEARCH_SIZE;
+    j < globalTile.j + SEARCH_SIZE;
+    j++
+  ) {
     if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
       spawnItem(i, j);
     }
