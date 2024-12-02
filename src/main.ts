@@ -6,6 +6,11 @@ import luck from "./luck.ts";
 
 const START_LOCATION = leaflet.latLng(36.98949379578401, -122.06277128548504);
 
+const northButton = document.getElementById("north")!;
+const southButton = document.getElementById("south")!;
+const westButton = document.getElementById("west")!;
+const eastButton = document.getElementById("east")!;
+
 const ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const SEARCH_SIZE = 8;
@@ -27,7 +32,7 @@ leaflet
       '&copy; <a href="http://www.openstreetmap.org/copyright">OpenStreetMap</a>',
   })
   .addTo(map);
-
+let playerPos = START_LOCATION;
 const playerMarker = leaflet.marker(START_LOCATION);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
@@ -48,6 +53,34 @@ interface Item {
   getId: () => string;
 }
 
+class CacheMemento {
+  private state: Map<string, Cell>;
+
+  constructor(state: Map<string, Cell>) {
+    this.state = new Map(state);
+  }
+
+  getState(): Map<string, Cell> {
+    return this.state;
+  }
+}
+
+class CacheCaretaker {
+  private mementos: Map<string, CacheMemento> = new Map();
+
+  saveState(key: string, cell: Cell): void {
+    if (!this.mementos.has(key)) {
+      this.mementos.set(key, new CacheMemento(new Map([[key, cell]])));
+    }
+  }
+
+  restoreState(key: string): Cell | null {
+    const memento = this.mementos.get(key);
+    return memento?.getState().get(key) || null;
+  }
+}
+
+const cacheCaretaker = new CacheCaretaker();
 const cellCache = new Map<string, Cell>();
 
 function getCell(i: number, j: number): Cell {
@@ -172,15 +205,130 @@ function spawnItem(i: number, j: number) {
   });
 }
 
-const globalTile = latLngToCell(START_LOCATION.lat, START_LOCATION.lng);
-for (let i = globalTile.i - SEARCH_SIZE; i < globalTile.i + SEARCH_SIZE; i++) {
+// Initial Generation
+const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
+const visibleCells = new Set<string>();
+for (let i = globalTile.i - SEARCH_SIZE; i <= globalTile.i + SEARCH_SIZE; i++) {
   for (
     let j = globalTile.j - SEARCH_SIZE;
-    j < globalTile.j + SEARCH_SIZE;
+    j <= globalTile.j + SEARCH_SIZE;
     j++
   ) {
-    if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
-      spawnItem(i, j);
+    visibleCells.add(`${i}:${j}`);
+    if (!cellCache.has(`${i}:${j}`)) {
+      if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
+        spawnItem(i, j);
+      }
     }
   }
 }
+
+function regenerateMap() {
+  const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
+  const visibleCells = new Set<string>();
+
+  for (
+    let i = globalTile.i - SEARCH_SIZE;
+    i <= globalTile.i + SEARCH_SIZE;
+    i++
+  ) {
+    for (
+      let j = globalTile.j - SEARCH_SIZE;
+      j <= globalTile.j + SEARCH_SIZE;
+      j++
+    ) {
+      const cellKey = `${i}:${j}`;
+      visibleCells.add(cellKey);
+
+      if (!cellCache.has(cellKey)) {
+        // Restore from caretaker
+        const cachedCell = cacheCaretaker.restoreState(cellKey);
+        if (cachedCell) {
+          cellCache.set(cellKey, cachedCell);
+          drawTileOnMap(i, j, cachedCell);
+        } else if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
+          // Generate new cell if not in cache
+          const newCell = getCell(i, j);
+          spawnItem(i, j);
+          cacheCaretaker.saveState(cellKey, newCell); // Save to caretaker
+        }
+      } else {
+        // Ensure tile is on map if already cached
+        const cachedCell = cellCache.get(cellKey)!;
+        if (!isTileOnMap(i, j)) {
+          drawTileOnMap(i, j, cachedCell);
+        }
+      }
+    }
+  }
+
+  // Remove out-of-range tiles
+  map.eachLayer((layer: leaflet.Layer) => {
+    if (layer instanceof leaflet.Rectangle) {
+      const northWest = layer.getBounds().getNorthWest();
+      const lat = northWest.lat;
+      const lng = northWest.lng;
+      const cellKey = `${Math.floor(lat / TILE_DEGREES)}:${
+        Math.floor(lng / TILE_DEGREES)
+      }`;
+      if (!visibleCells.has(cellKey)) {
+        map.removeLayer(layer);
+      }
+    }
+  });
+}
+
+function drawTileOnMap(i: number, j: number, cell: Cell) {
+  const { lat, lng } = cellToLatLng(i, j);
+  const bounds = leaflet.latLngBounds([
+    [lat, lng],
+    [lat + TILE_DEGREES, lng + TILE_DEGREES],
+  ]);
+
+  const rect = leaflet.rectangle(bounds);
+  rect.addTo(map);
+  rect.bindPopup(() => {
+    const popupDiv = document.createElement("div");
+    popupDiv.innerHTML = `<div>Tile (${i}, ${j})</div>`;
+    const tileItemsList = document.createElement("ul");
+    cell.items.forEach((tileItem) => {
+      const itemElement = document.createElement("li");
+      itemElement.textContent = tileItem.getId();
+      tileItemsList.appendChild(itemElement);
+    });
+    popupDiv.appendChild(tileItemsList);
+    return popupDiv;
+  });
+}
+
+function isTileOnMap(i: number, j: number): boolean {
+  const { lat, lng } = cellToLatLng(i, j);
+  const bounds = leaflet.latLngBounds([
+    [lat, lng],
+    [lat + TILE_DEGREES, lng + TILE_DEGREES],
+  ]);
+
+  let tile = false;
+  map.eachLayer((layer: leaflet.Layer) => {
+    if (layer instanceof leaflet.Rectangle) {
+      if (layer.getBounds().equals(bounds)) {
+        tile = true;
+      }
+    }
+  });
+  return tile;
+}
+
+function movePlayer(latMove: number, lngMove: number) {
+  playerPos = leaflet.latLng(
+    playerPos.lat + latMove,
+    playerPos.lng + lngMove,
+  );
+  playerMarker.setLatLng(playerPos);
+  regenerateMap();
+}
+
+northButton.addEventListener("click", () => movePlayer(TILE_DEGREES, 0));
+southButton.addEventListener("click", () => movePlayer(-TILE_DEGREES, 0));
+westButton.addEventListener("click", () => movePlayer(0, -TILE_DEGREES));
+eastButton.addEventListener("click", () => movePlayer(0, TILE_DEGREES));
