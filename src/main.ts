@@ -6,18 +6,28 @@ import luck from "./luck.ts";
 
 const START_LOCATION = leaflet.latLng(36.98949379578401, -122.06277128548504);
 
+// Buttons
 const northButton = document.getElementById("north")!;
 const southButton = document.getElementById("south")!;
 const westButton = document.getElementById("west")!;
 const eastButton = document.getElementById("east")!;
 const sensorButton = document.getElementById("sensor")!;
 const resetButton = document.getElementById("reset")!;
+// Button Event Listeners
+northButton.addEventListener("click", () => movePlayer(TILE_DEGREES, 0));
+southButton.addEventListener("click", () => movePlayer(-TILE_DEGREES, 0));
+westButton.addEventListener("click", () => movePlayer(0, -TILE_DEGREES));
+eastButton.addEventListener("click", () => movePlayer(0, TILE_DEGREES));
+sensorButton.addEventListener("click", () => geoLocation());
+resetButton.addEventListener("click", () => reset());
 
+// Constants
 const ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
 const SEARCH_SIZE = 8;
 const ITEM_SPAWN_PROBABILITY = 0.1;
 
+// Map config setup
 const map = leaflet.map(document.getElementById("map")!, {
   center: START_LOCATION,
   zoom: ZOOM_LEVEL,
@@ -43,8 +53,7 @@ let playerItems: Item[] = [];
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No items yet...";
 
-// Flyweight pattern for cells and items
-
+// Interfaces
 interface Cell {
   i: number;
   j: number;
@@ -57,8 +66,7 @@ interface Item {
   getId: () => string;
 }
 
-// Cache setup using momento pattern
-
+// Cache system
 class CacheMemento {
   private state: Map<string, Cell>;
 
@@ -71,8 +79,7 @@ class CacheMemento {
   }
 }
 
-// Cache handler for save and loading states
-
+// Cache handler
 class CacheCaretaker {
   private mementos: Map<string, CacheMemento> = new Map();
 
@@ -95,6 +102,7 @@ class CacheCaretaker {
 const cacheCaretaker = new CacheCaretaker();
 const cellCache = new Map<string, Cell>();
 
+// Cell Utility functions
 function getCell(i: number, j: number): Cell {
   const key = `${i}:${j}`;
   if (!cellCache.has(key)) {
@@ -102,19 +110,6 @@ function getCell(i: number, j: number): Cell {
     cellCache.set(key, cell);
   }
   return cellCache.get(key)!;
-}
-
-// Create item at cell
-
-function createItem(cell: Cell): Item {
-  const serialNum = cell.items.length;
-  const item: Item = {
-    cell,
-    serialNum,
-    getId: () => `${cell.i}:${cell.j}#${serialNum}`,
-  };
-  cell.items.push(item);
-  return item;
 }
 
 function latLngToCell(lat: number, lng: number): { i: number; j: number } {
@@ -131,8 +126,9 @@ function cellToLatLng(i: number, j: number): { lat: number; lng: number } {
   };
 }
 
-// Update item display
+//======Item and Display Handling=========//
 
+// Update item display
 function updateStatusPanel() {
   // Update collected items
   const collectedItems = playerItems
@@ -144,12 +140,19 @@ function updateStatusPanel() {
   `;
 }
 
+// Create item at cell
+function createItem(cell: Cell): Item {
+  const serialNum = cell.items.length;
+  const item: Item = {
+    cell,
+    serialNum,
+    getId: () => `${cell.i}:${cell.j}#${serialNum}`,
+  };
+  cell.items.push(item);
+  return item;
+}
+
 function spawnItem(i: number, j: number) {
-  const { lat, lng } = cellToLatLng(i, j);
-  const bounds = leaflet.latLngBounds([
-    [lat, lng],
-    [lat + TILE_DEGREES, lng + TILE_DEGREES],
-  ]);
   // Generate number of items per cell
   const numItems = Math.floor(luck([i, j, "initialValue"].toString()) * 10) +
     1;
@@ -157,6 +160,74 @@ function spawnItem(i: number, j: number) {
   for (let i = 0; i < numItems; i++) {
     createItem(cell);
   }
+}
+
+//=========Map Handling=========//
+
+// Reloading map
+function regenerateMap() {
+  const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
+  const visibleCells = new Set<string>();
+
+  for (
+    let i = globalTile.i - SEARCH_SIZE;
+    i <= globalTile.i + SEARCH_SIZE;
+    i++
+  ) {
+    for (
+      let j = globalTile.j - SEARCH_SIZE;
+      j <= globalTile.j + SEARCH_SIZE;
+      j++
+    ) {
+      const cellKey = `${i}:${j}`;
+      visibleCells.add(cellKey);
+
+      if (!cellCache.has(cellKey)) {
+        // Restore from caretaker
+        const cachedCell = cacheCaretaker.restoreState(cellKey);
+        if (cachedCell) {
+          cellCache.set(cellKey, cachedCell);
+          drawTileOnMap(i, j, cachedCell);
+        } else if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
+          // Generate new cell if not in cache
+          const newCell = getCell(i, j);
+          spawnItem(i, j);
+          drawTileOnMap(i, j, newCell);
+          cacheCaretaker.saveState(cellKey, newCell); // Save to caretaker
+        }
+      } else {
+        // Ensure tile is on map if already cached
+        const cachedCell = cellCache.get(cellKey)!;
+        if (!isTileOnMap(i, j)) {
+          drawTileOnMap(i, j, cachedCell);
+        }
+      }
+    }
+  }
+
+  // Remove out-of-range tiles
+  map.eachLayer((layer: leaflet.Layer) => {
+    if (layer instanceof leaflet.Rectangle) {
+      const northWest = layer.getBounds().getNorthWest();
+      const lat = northWest.lat;
+      const lng = northWest.lng;
+      const cellKey = `${Math.floor(lat / TILE_DEGREES)}:${
+        Math.floor(lng / TILE_DEGREES)
+      }`;
+      if (!visibleCells.has(cellKey)) {
+        map.removeLayer(layer);
+      }
+    }
+  });
+}
+
+// Redraw tiles on map to display info
+function drawTileOnMap(i: number, j: number, cell: Cell) {
+  const { lat, lng } = cellToLatLng(i, j);
+  const bounds = leaflet.latLngBounds([
+    [lat, lng],
+    [lat + TILE_DEGREES, lng + TILE_DEGREES],
+  ]);
 
   const rect = leaflet.rectangle(bounds);
   rect.addTo(map);
@@ -220,104 +291,6 @@ function spawnItem(i: number, j: number) {
     return popupDiv;
   });
 }
-
-// Initial Generation
-const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
-const visibleCells = new Set<string>();
-for (let i = globalTile.i - SEARCH_SIZE; i <= globalTile.i + SEARCH_SIZE; i++) {
-  for (
-    let j = globalTile.j - SEARCH_SIZE;
-    j <= globalTile.j + SEARCH_SIZE;
-    j++
-  ) {
-    visibleCells.add(`${i}:${j}`);
-    if (!cellCache.has(`${i}:${j}`)) {
-      if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
-        spawnItem(i, j);
-      }
-    }
-  }
-}
-
-// Reloading map
-function regenerateMap() {
-  const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
-  const visibleCells = new Set<string>();
-
-  for (
-    let i = globalTile.i - SEARCH_SIZE;
-    i <= globalTile.i + SEARCH_SIZE;
-    i++
-  ) {
-    for (
-      let j = globalTile.j - SEARCH_SIZE;
-      j <= globalTile.j + SEARCH_SIZE;
-      j++
-    ) {
-      const cellKey = `${i}:${j}`;
-      visibleCells.add(cellKey);
-
-      if (!cellCache.has(cellKey)) {
-        // Restore from caretaker
-        const cachedCell = cacheCaretaker.restoreState(cellKey);
-        if (cachedCell) {
-          cellCache.set(cellKey, cachedCell);
-          drawTileOnMap(i, j, cachedCell);
-        } else if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
-          // Generate new cell if not in cache
-          const newCell = getCell(i, j);
-          spawnItem(i, j);
-          cacheCaretaker.saveState(cellKey, newCell); // Save to caretaker
-        }
-      } else {
-        // Ensure tile is on map if already cached
-        const cachedCell = cellCache.get(cellKey)!;
-        if (!isTileOnMap(i, j)) {
-          drawTileOnMap(i, j, cachedCell);
-        }
-      }
-    }
-  }
-
-  // Remove out-of-range tiles
-  map.eachLayer((layer: leaflet.Layer) => {
-    if (layer instanceof leaflet.Rectangle) {
-      const northWest = layer.getBounds().getNorthWest();
-      const lat = northWest.lat;
-      const lng = northWest.lng;
-      const cellKey = `${Math.floor(lat / TILE_DEGREES)}:${
-        Math.floor(lng / TILE_DEGREES)
-      }`;
-      if (!visibleCells.has(cellKey)) {
-        map.removeLayer(layer);
-      }
-    }
-  });
-}
-
-// Redraw tiles on map to display info
-function drawTileOnMap(i: number, j: number, cell: Cell) {
-  const { lat, lng } = cellToLatLng(i, j);
-  const bounds = leaflet.latLngBounds([
-    [lat, lng],
-    [lat + TILE_DEGREES, lng + TILE_DEGREES],
-  ]);
-
-  const rect = leaflet.rectangle(bounds);
-  rect.addTo(map);
-  rect.bindPopup(() => {
-    const popupDiv = document.createElement("div");
-    popupDiv.innerHTML = `<div>Tile (${i}, ${j})</div>`;
-    const tileItemsList = document.createElement("ul");
-    cell.items.forEach((tileItem) => {
-      const itemElement = document.createElement("li");
-      itemElement.textContent = tileItem.getId();
-      tileItemsList.appendChild(itemElement);
-    });
-    popupDiv.appendChild(tileItemsList);
-    return popupDiv;
-  });
-}
 // Check if a tile is being displayed
 function isTileOnMap(i: number, j: number): boolean {
   const { lat, lng } = cellToLatLng(i, j);
@@ -337,6 +310,19 @@ function isTileOnMap(i: number, j: number): boolean {
   return tile;
 }
 
+//======Player Handling=========//
+
+// Player movement
+function movePlayer(latMove: number, lngMove: number) {
+  playerPos = leaflet.latLng(
+    playerPos.lat + latMove,
+    playerPos.lng + lngMove,
+  );
+  playerMarker.setLatLng(playerPos);
+  regenerateMap();
+}
+
+// Activate geolocation
 function geoLocation() {
   navigator.geolocation.getCurrentPosition((position) => {
     const { latitude, longitude } = position.coords;
@@ -357,6 +343,7 @@ function geoLocation() {
   });
 }
 
+// Reset state
 function reset() {
   const confirmation = prompt(
     "Are you sure you want to erase your game state? Type 'yes' to confirm.",
@@ -387,19 +374,24 @@ function reset() {
   regenerateMap();
 }
 
-// Player movement
-function movePlayer(latMove: number, lngMove: number) {
-  playerPos = leaflet.latLng(
-    playerPos.lat + latMove,
-    playerPos.lng + lngMove,
-  );
-  playerMarker.setLatLng(playerPos);
-  regenerateMap();
-}
+//============Initial Map Generation===========//
 
-northButton.addEventListener("click", () => movePlayer(TILE_DEGREES, 0));
-southButton.addEventListener("click", () => movePlayer(-TILE_DEGREES, 0));
-westButton.addEventListener("click", () => movePlayer(0, -TILE_DEGREES));
-eastButton.addEventListener("click", () => movePlayer(0, TILE_DEGREES));
-sensorButton.addEventListener("click", () => geoLocation());
-resetButton.addEventListener("click", () => reset());
+const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
+const visibleCells = new Set<string>();
+for (let i = globalTile.i - SEARCH_SIZE; i <= globalTile.i + SEARCH_SIZE; i++) {
+  for (
+    let j = globalTile.j - SEARCH_SIZE;
+    j <= globalTile.j + SEARCH_SIZE;
+    j++
+  ) {
+    visibleCells.add(`${i}:${j}`);
+    if (!cellCache.has(`${i}:${j}`)) {
+      if (luck([i, j].toString()) < ITEM_SPAWN_PROBABILITY) {
+        spawnItem(i, j);
+        // Draw map
+        const cell = getCell(i, j);
+        drawTileOnMap(i, j, cell);
+      }
+    }
+  }
+}
