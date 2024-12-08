@@ -39,7 +39,7 @@ const playerMarker = leaflet.marker(START_LOCATION);
 playerMarker.bindTooltip("That's you!");
 playerMarker.addTo(map);
 
-const playerItems: Item[] = [];
+let playerItems: Item[] = [];
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No items yet...";
 
@@ -85,6 +85,10 @@ class CacheCaretaker {
   restoreState(key: string): Cell | null {
     const memento = this.mementos.get(key);
     return memento?.getState().get(key) || null;
+  }
+
+  clear(): void {
+    this.mementos.clear();
   }
 }
 
@@ -354,7 +358,33 @@ function geoLocation() {
 }
 
 function reset() {
-  console.log("reset");
+  const confirmation = prompt(
+    "Are you sure you want to erase your game state? Type 'yes' to confirm.",
+  );
+  if (confirmation !== "yes") {
+    return;
+  }
+
+  playerItems = [];
+  updateStatusPanel();
+
+  playerPos = START_LOCATION;
+  playerMarker.setLatLng(playerPos);
+  map.setView(playerPos);
+
+  // Clear cache and momentos
+  cellCache.clear();
+  cacheCaretaker.clear();
+
+  // Clear map of tiles
+  map.eachLayer((layer: leaflet.Layer) => {
+    if (layer instanceof leaflet.Rectangle) {
+      map.removeLayer(layer);
+    }
+  });
+
+  // Regenerate map
+  regenerateMap();
 }
 
 // Player movement
