@@ -10,6 +10,8 @@ const northButton = document.getElementById("north")!;
 const southButton = document.getElementById("south")!;
 const westButton = document.getElementById("west")!;
 const eastButton = document.getElementById("east")!;
+const sensorButton = document.getElementById("sensor")!;
+const resetButton = document.getElementById("reset")!;
 
 const ZOOM_LEVEL = 19;
 const TILE_DEGREES = 1e-4;
@@ -41,6 +43,8 @@ const playerItems: Item[] = [];
 const statusPanel = document.querySelector<HTMLDivElement>("#statusPanel")!;
 statusPanel.innerHTML = "No items yet...";
 
+// Flyweight pattern for cells and items
+
 interface Cell {
   i: number;
   j: number;
@@ -53,6 +57,8 @@ interface Item {
   getId: () => string;
 }
 
+// Cache setup using momento pattern
+
 class CacheMemento {
   private state: Map<string, Cell>;
 
@@ -64,6 +70,8 @@ class CacheMemento {
     return this.state;
   }
 }
+
+// Cache handler for save and loading states
 
 class CacheCaretaker {
   private mementos: Map<string, CacheMemento> = new Map();
@@ -92,6 +100,8 @@ function getCell(i: number, j: number): Cell {
   return cellCache.get(key)!;
 }
 
+// Create item at cell
+
 function createItem(cell: Cell): Item {
   const serialNum = cell.items.length;
   const item: Item = {
@@ -117,6 +127,8 @@ function cellToLatLng(i: number, j: number): { lat: number; lng: number } {
   };
 }
 
+// Update item display
+
 function updateStatusPanel() {
   // Update collected items
   const collectedItems = playerItems
@@ -134,7 +146,7 @@ function spawnItem(i: number, j: number) {
     [lat, lng],
     [lat + TILE_DEGREES, lng + TILE_DEGREES],
   ]);
-
+  // Generate number of items per cell
   const numItems = Math.floor(luck([i, j, "initialValue"].toString()) * 10) +
     1;
   const cell = getCell(i, j);
@@ -223,6 +235,7 @@ for (let i = globalTile.i - SEARCH_SIZE; i <= globalTile.i + SEARCH_SIZE; i++) {
   }
 }
 
+// Reloading map
 function regenerateMap() {
   const globalTile = latLngToCell(playerPos.lat, playerPos.lng);
   const visibleCells = new Set<string>();
@@ -278,6 +291,7 @@ function regenerateMap() {
   });
 }
 
+// Redraw tiles on map to display info
 function drawTileOnMap(i: number, j: number, cell: Cell) {
   const { lat, lng } = cellToLatLng(i, j);
   const bounds = leaflet.latLngBounds([
@@ -300,7 +314,7 @@ function drawTileOnMap(i: number, j: number, cell: Cell) {
     return popupDiv;
   });
 }
-
+// Check if a tile is being displayed
 function isTileOnMap(i: number, j: number): boolean {
   const { lat, lng } = cellToLatLng(i, j);
   const bounds = leaflet.latLngBounds([
@@ -319,6 +333,31 @@ function isTileOnMap(i: number, j: number): boolean {
   return tile;
 }
 
+function geoLocation() {
+  navigator.geolocation.getCurrentPosition((position) => {
+    const { latitude, longitude } = position.coords;
+    playerPos = leaflet.latLng(
+      latitude,
+      longitude,
+    );
+    map.setView(playerPos);
+    playerMarker.setLatLng(playerPos);
+
+    regenerateMap();
+  }, (error) => {
+    console.error("Geolocation error:", error);
+  }, {
+    enableHighAccuracy: true,
+    maximumAge: 10000,
+    timeout: 5000,
+  });
+}
+
+function reset() {
+  console.log("reset");
+}
+
+// Player movement
 function movePlayer(latMove: number, lngMove: number) {
   playerPos = leaflet.latLng(
     playerPos.lat + latMove,
@@ -332,3 +371,5 @@ northButton.addEventListener("click", () => movePlayer(TILE_DEGREES, 0));
 southButton.addEventListener("click", () => movePlayer(-TILE_DEGREES, 0));
 westButton.addEventListener("click", () => movePlayer(0, -TILE_DEGREES));
 eastButton.addEventListener("click", () => movePlayer(0, TILE_DEGREES));
+sensorButton.addEventListener("click", () => geoLocation());
+resetButton.addEventListener("click", () => reset());
